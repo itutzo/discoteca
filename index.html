@@ -628,13 +628,21 @@ let recsOpen = false, totsRecs = null, totsLF = null;
 const recsTots = () => totsRecs || (totsRecs = api('/api/recs-tots').catch(() => ({})));
 const dadesLF = () => totsLF || (totsLF = api('/api/lastfm').catch(() => ({})));
 // etiquetes de Last.fm que no diuen res de l'estil
-const SOROLL = new Set(['seen live','favorites','favourites','favorite','favourite','my favorite','love','awesome','beautiful','amazing','cool','good','great','best','all','spotify','under 2000 listeners','albums i own','music','vinyl','male vocalists','female vocalists','male vocalist','female vocalist','singer','band','bands','usa','american','british','uk','english','canadian','australian','german','swedish','finnish','norwegian','spanish','french','italian','japanese','irish','scottish','polish','dutch','danish','brazilian']);
+const SOROLL = new Set(['seen live','favorites','favourites','favorite','favourite','my favorite','love','awesome','beautiful','amazing','cool','good','great','best','all','spotify','under 2000 listeners','albums i own','music','vinyl','male vocalists','female vocalists','male vocalist','female vocalist','singer','band','bands','usa','american','british','uk','english','canadian','australian','german','swedish','finnish','norwegian','spanish','french','italian','japanese','irish','scottish','polish','dutch','danish','brazilian','spain','espana','germany','sweden','finland','norway','england','australia','canada','california','texas','new york','los angeles','seattle','minnesota','indiana','guitar','guitarist','supergroup','00s','90s','80s','70s','60s','10s','2000s','1990s','1980s','1970s']);
 const netTag = t => { t = String(t||'').toLowerCase().replace(/-/g,' ').replace(/\s+/g,' ').trim(); return SOROLL.has(t) || t.length < 2 ? null : t; };
-const vectorLF = x => { const v = new Map(); (x?.t||[]).forEach(([t,n]) => { t = netTag(t); if(t) v.set(t, (v.get(t)||0) + n/100); }); return v; };
+let IDF = new Map(), NOMS = new Set();   // les etiquetes que té tothom («rock») compten poc; les específiques («stoner rock») molt
+const vectorLF = x => { const v = new Map(); (x?.t||[]).forEach(([t,n]) => { t = netTag(t); if(t && !NOMS.has(tok2(t))) v.set(t, (v.get(t)||0) + (n/100)*(IDF.get(t) ?? 1)); }); return v; };
+function calculaIDF(LF){
+  NOMS = new Set(Object.keys(LF));    // etiquetes que són noms d'artista («led zeppelin») no diuen l'estil
+  const df = new Map(); let N = 0;
+  Object.values(LF).forEach(x => { if(!x?.t?.length) return; N++; new Set(x.t.map(([t]) => netTag(t)).filter(Boolean)).forEach(t => df.set(t, (df.get(t)||0) + 1)); });
+  IDF = new Map([...df].map(([t,n]) => [t, Math.log((N + 1) / (n + 1))]));
+}
 const cosinus = (a, b, nb) => { let s = 0, na = 0; a.forEach((x,k) => { na += x*x; const y = b.get(k); if(y) s += x*y; }); return na && nb ? s/Math.sqrt(na)/nb : 0; };
 const factorFama = n => n == null ? 1 : n < 30000 ? 0.9 : n < 150000 ? 1.1 : 1 / (1 + 0.9*Math.log10(n/150000));
 async function identitat(){
   const LF = await dadesLF();
+  calculaIDF(LF);
   const perArt = new Map();
   for(const d of discs){
     const n = num(d.classificacio) || 6;
@@ -659,7 +667,7 @@ async function identitat(){
   // referència: com encaixen amb el perfil els teus propis artistes preferits
   const meus = [...perArt.entries()].filter(([,A]) => A.vec.size).map(([aid,A]) => ({aid, A, c:cosinus(A.vec, perfil, np)}));
   const cs = meus.filter(x => x.A.s/x.A.n >= 0.5).map(x => x.c).sort((a,b) => a-b);
-  const ref = cs.length ? cs[Math.floor(cs.length*0.8)] : 0.5;
+  const ref = cs.length ? cs[Math.floor(cs.length*0.97)] : 0.5;
   const encaix = v => Math.min(100, Math.round(100 * cosinus(v, perfil, np) / (ref || 1)));
   const tot = [...perfil.values()].reduce((s,x) => s+x, 0) || 1;
   const totD = [...decades.values()].reduce((s,x) => s+x, 0) || 1;
@@ -706,7 +714,9 @@ async function calculaRecs(){
   const ordena = M => [...M.entries()].map(([k,c]) => puntua({...c, k})).filter(c => c.encaix == null || c.encaix >= 55).sort((a,b) => b.punts - a.punts);
   const A = ordena(cand).slice(0, 25);
   const perArtista = new Map();
-  const D = ordena(candD).filter(x => { const n = perArtista.get(tok2(x.artista))||0; perArtista.set(tok2(x.artista), n+1); return n < 2; }).slice(0, 25);
+  const jaA = new Set(A.map(x => x.k));
+  const brossa = /^(image hidden|various artists|varios|unknown|untitled)$/i;
+  const D = ordena(candD).filter(x => !brossa.test(x.artista) && !brossa.test(x.titol) && !jaA.has(tok2(x.artista))).filter(x => { const n = perArtista.get(tok2(x.artista))||0; perArtista.set(tok2(x.artista), n+1); return n < 2; }).slice(0, 25);
   return {A, D, base, I};
 }
 async function obreRecs(){
