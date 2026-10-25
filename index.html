@@ -104,6 +104,11 @@ form.edit .wide{grid-column:1/-1}
 ul.disc{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:6px 20px}
 ul.disc .ign{border:0;background:none;color:var(--muted);cursor:pointer;margin-left:6px;padding:2px 6px;border-radius:4px;font-size:13px}
 ul.disc .ign:hover{color:var(--accent);background:var(--accent-soft)}
+ul.disc.recs li{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:8px 0}
+ul.disc.recs .rq{font-size:12.5px}
+.chip.recbtn{border-color:var(--accent);color:var(--accent);font-weight:600}
+.chip.recbtn:hover{background:var(--accent-soft)}
+.tag.nou{background:var(--accent-soft);color:var(--accent)}
 ul.disc li{padding:6px 0;border-bottom:1px dashed var(--line);min-width:0}
 ul.disc a{color:var(--fg);font-weight:600;text-decoration:none}
 ul.disc a:hover{color:var(--accent);text-decoration:underline}
@@ -172,6 +177,7 @@ fieldset.sups input{width:auto}
         <button class="chip" type="button" data-sup="lp" aria-pressed="false">Vinil</button>
         <button class="chip" type="button" data-sup="fis" aria-pressed="false">Físics</button>
         <button class="chip" type="button" data-sup="pend" aria-pressed="false">Pendents</button>
+        <button class="chip recbtn" type="button" id="recsBtn">★ Recomanacions</button>
       </div>
       <select id="fEstil" aria-label="Estil"><option value="">Tots els estils</option></select>
       <select id="fNota" aria-label="Classificació mínima">
@@ -341,6 +347,11 @@ const api = async (path, opts) => {
     cacheDades = {discs: dades, artistes}; cacheIgnorats = ig; canvisMobil = canvis;
     aplicaCanvis(cacheDades, cacheIgnorats, canvis);
     return cacheDades;
+  }
+  if(p === '/api/oients') return llegeixJSON('/dades/oients.json', {});
+  if(p === '/api/recs-tots'){
+    if(!cacheRecs) cacheRecs = llegeixJSON('/dades/recs.json', {});
+    return await cacheRecs;
   }
   if(p.startsWith('/api/recs/')){
     if(!cacheRecs) cacheRecs = llegeixJSON('/dades/recs.json', {});
@@ -536,7 +547,7 @@ function openSheet(id, edit=false){
   $('#sheet').hidden = false; $('#scrim').hidden = false; document.body.style.overflow='hidden';
   editing ? renderForm() : renderSheet();
 }
-function closeSheet(){ $('#sheet').hidden = true; $('#scrim').hidden = true; document.body.style.overflow=''; current=null; editing=false; }
+function closeSheet(){ recsOpen = false; $('#sheet').hidden = true; $('#scrim').hidden = true; document.body.style.overflow=''; current=null; editing=false; }
 function fact(k, v){ return v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : ''; }
 function renderSheet(){
   const d = current, sh = $('#sheet');
@@ -604,10 +615,87 @@ async function loadDiscover(d){
 }
 let igCache = null;
 const ignorats = () => igCache || (igCache = api('/api/ignorats').catch(()=>({artistes:[],discos:[]})));
+
+/* ---------- Recomanacions segons tota la biblioteca ---------- */
+let recsOpen = false, totsRecs = null;
+const recsTots = () => totsRecs || (totsRecs = api('/api/recs-tots').catch(() => ({})));
+let totsOients = null;
+const oients = () => totsOients || (totsOients = api('/api/oients').catch(() => ({})));
+// molt coneguts (milions d'oients a Last.fm) baixen; els poc coneguts pugen una mica
+const factorFama = n => n == null ? 1 : n < 30000 ? 0.85 : n < 150000 ? 1.15 : 1 / (1 + 0.9*Math.log10(n/150000));
+function perfil(){
+  const perArt = new Map(), perEstil = new Map();
+  for(const d of discs){
+    const n = num(d.classificacio) || 6;            // sense nota = neutre
+    const w = Math.max(0.1, (n - 4) / 6);           // un 10 pesa molt més que un 5
+    const a = String(d.artista);
+    const A = perArt.get(a) || {s:0, n:0, estils:new Map()};
+    A.s += w; A.n++;
+    if(d.estil){ A.estils.set(d.estil, (A.estils.get(d.estil)||0) + 1); perEstil.set(d.estil, (perEstil.get(d.estil)||0) + w); }
+    perArt.set(a, A);
+  }
+  return {perArt, perEstil, maxE: Math.max(1, ...perEstil.values())};
+}
+async function calculaRecs(){
+  const [R, ig, OI] = await Promise.all([recsTots(), ignorats(), oients()]);
+  const {perArt, perEstil, maxE} = perfil();
+  const tinc = new Set(Object.values({...artistes, ...newArtists}).map(tok2));
+  const igA = new Set(ig.artistes), igD = new Set(ig.discos);
+  const cand = new Map(), candD = new Map();
+  let base = 0;
+  for(const [aid, r] of Object.entries(R || {})){
+    const A = perArt.get(String(aid)); if(!A || !r) continue; base++;
+    const estils = [...A.estils.entries()].sort((a,b) => b[1]-a[1]).slice(0, 2);
+    const afiEstil = estils.length ? (perEstil.get(estils[0][0])||0) / maxE : 0.3;
+    const pes = (A.s / A.n) * (0.4 + 0.6*Math.sqrt(afiEstil)) * (1 + Math.log(A.n)/4);
+    const nomA = artName(aid);
+    const suma = (M, k, x, i, extra) => {
+      const c = M.get(k) || {...extra, s:0, per:new Map(), fonts:new Set(), estils:new Map()};
+      c.s += pes * (x.score ?? (x.fonts?.length||1)) * Math.max(0.3, 1 - i/50);
+      c.per.set(nomA, Math.max(c.per.get(nomA)||0, pes));
+      (x.fonts||[]).forEach(f => c.fonts.add(f));
+      estils.forEach(([e]) => c.estils.set(e, (c.estils.get(e)||0) + pes));
+      M.set(k, c);
+    };
+    (r.artistes||[]).forEach((x, i) => { const k = tok2(x.nom); if(k && !tinc.has(k) && !igA.has(k)) suma(cand, k, x, i, {nom:x.nom}); });
+    (r.discos||[]).forEach((x, i) => {
+      const ka = tok2(x.artista), k = ka + '|' + tok2(x.titol);
+      if(ka && !tinc.has(ka) && !igA.has(ka) && !igD.has(k)) suma(candD, k, x, i, {artista:x.artista, titol:x.titol, any:x.any});
+    });
+  }
+  const oi = nom => (OI[tok2(nom)] || [])[0];
+  const nota = c => c.s * (1 + 0.35*(c.per.size - 1)) * factorFama(oi(c.nom || c.artista));   // com més artistes teus hi coincideixen, millor
+  const ordena = M => [...M.entries()].map(([k,c]) => ({...c, k, punts:nota(c), oients:oi(c.nom || c.artista)})).sort((a,b) => b.punts - a.punts);
+  const A = ordena(cand).slice(0, 25);
+  const perArtista = new Map();
+  const D = ordena(candD).filter(x => { const n = perArtista.get(tok2(x.artista))||0; perArtista.set(tok2(x.artista), n+1); return n < 2; }).slice(0, 25);
+  return {A, D, base, total: perArt.size};
+}
+async function obreRecs(){
+  const sh = $('#sheet'); current = null; editing = false; recsOpen = true;
+  sh.hidden = false; $('#scrim').hidden = false; document.body.style.overflow = 'hidden';
+  if(!sh.querySelector('#recsBody')) sh.innerHTML = `<div class="bar"><button class="btn ghost" type="button" data-close>← Tanca</button></div>
+  <div class="body"><h2 id="sheetTitle" class="brand" style="margin-bottom:4px">Recomanacions per a tu</h2>
+  <p class="who2" style="margin:0 0 14px">Artistes i discos que no tens, triats segons els estils i les notes de tota la teva biblioteca. Els molt famosos baixen a la llista, perquè probablement ja els coneixes. El nom obre la biografia; ✕ el descarta per sempre.</p>
+  <div id="recsBody"><p class="who2">Calculant…</p></div></div>`;
+  const {A, D, base, total} = await calculaRecs();
+  if(!recsOpen) return;
+  const top = M => [...M.entries()].sort((a,b) => b[1]-a[1]).slice(0, 3).map(x => x[0]);
+  const perque = c => `<span class="who2 rq">Perquè t'agraden ${top(c.per).map(esc).join(', ')}${c.per.size > 3 ? ` i ${c.per.size-3} més` : ''}</span>`;
+  const etiq = c => top(c.estils).slice(0, 2).map(e => `<span class="tag">${esc(e)}</span>`).join('') + `<span class="tag" title="${esc([...c.fonts].join(', '))}">${c.fonts.size} ${c.fonts.size===1?'font':'fonts'}</span>`
+    + (c.oients != null && c.oients < 150000 ? '<span class="tag nou">Poc conegut</span>' : '');
+  const am = q => 'https://www.allmusic.com/search/all/' + encodeURIComponent(q);
+  const ign = (t, k) => `<button class="ign" type="button" data-ign="${t}" data-clau="${esc(k)}" title="Descarta: no me'l tornis a proposar">✕</button>`;
+  $('#recsBody').innerHTML = (!base ? '<p class="notice">Encara no hi ha recomanacions. Es van calculant a mesura que el PC completa els discos cada dia a les 14:30.</p>' : '')
+    + (A.length ? `<h3 class="sec">Artistes que et poden agradar · ${A.length}</h3><ul class="disc recs">${A.map(x => `<li><div><button class="link" type="button" data-info="${esc(x.nom)}">${esc(x.nom)}</button> ${etiq(x)}<br>${perque(x)}</div>${ign('artistes', x.k)}</li>`).join('')}</ul>` : '')
+    + (D.length ? `<h3 class="sec">Discos per descobrir · ${D.length}</h3><ul class="disc recs">${D.map(x => `<li><div><a href="${am(x.artista+' '+x.titol)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span> ${etiq(x)}<br>${perque(x)}</div>${ign('discos', x.k)}</li>`).join('')}</ul>` : '')
+    + (base && base < total ? `<p class="who2" style="margin-top:16px">Calculat amb ${base} dels teus ${total} artistes. Cada dia el PC n'afegeix més i les recomanacions milloren.</p>` : '');
+}
 async function ignora(tipus, clau){
   try{ await postJSON('/api/ignora', {tipus, clau}); }catch{ toast('No s\'ha pogut desar.'); return; }
   const ig = await ignorats(); ig[tipus].push(clau);
   if(current) loadDiscover(current);
+  if(recsOpen && !$('#sheet').hidden) obreRecs();
   toast('D\'acord, no te\'l tornaré a proposar');
 }
 const tok2 = s => norm(s).replace(/^the\s+|,\s*the$/,'').replace(/[^a-z0-9]/g,'');
@@ -751,6 +839,7 @@ async function doDelete(){
 document.addEventListener('click', e => {
   const t = e.target.closest('button'); if(!t) { if(e.target.id==='scrim') closeSheet(); return; }
   if(t.dataset.open != null){ openSheet(t.dataset.open); return; }
+  if(t.id === 'recsBtn'){ obreRecs(); return; }
   if(t.dataset.ign){ ignora(t.dataset.ign, t.dataset.clau); return; }
   if(t.dataset.run){ t.closest('details')?.removeAttribute('open'); run(t.dataset.run, t.dataset.id); return; }
   if(t.hasAttribute('data-close') || t.hasAttribute('data-cancel')){ current && t.hasAttribute('data-cancel') ? (editing=false, renderSheet()) : closeSheet(); return; }
