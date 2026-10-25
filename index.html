@@ -682,7 +682,7 @@ async function onScan(e){
       code = r[0]?.rawValue || null;
     }
     if(!code){
-      if(!window.ZXing) await new Promise((ok,ko)=>{ const sc=document.createElement('script'); sc.src='https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'; sc.onload=ok; sc.onerror=ko; document.head.appendChild(sc); });
+      if(!window.ZXing) await new Promise((ok,ko)=>{ const sc=document.createElement('script'); sc.src='https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'; sc.integrity='sha384-BzBxP10ZE72aitqj5UMmUsbKFliP/DZqA8Wq+BNNhlIJDGoEd1tpkMYXOg9+n6sB'; sc.crossOrigin='anonymous'; sc.onload=ok; sc.onerror=ko; document.head.appendChild(sc); });
       const url = URL.createObjectURL(f);
       const res = await new ZXing.BrowserMultiFormatReader().decodeFromImageUrl(url);
       code = res?.getText?.() || res?.text || null;
