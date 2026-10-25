@@ -109,6 +109,11 @@ ul.disc.recs .rq{font-size:12.5px}
 .chip.recbtn{border-color:var(--accent);color:var(--accent);font-weight:600}
 .chip.recbtn:hover{background:var(--accent-soft)}
 .tag.nou{background:var(--accent-soft);color:var(--accent)}
+.fit{display:inline-block;font-family:var(--f-mono);font-size:12px;font-weight:700;color:var(--accent-fg);background:var(--accent);border-radius:4px;padding:1px 6px;margin-right:4px}
+.ident{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+ul.barres{list-style:none;margin:0 0 10px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 18px}
+ul.barres li{display:grid;grid-template-columns:120px 1fr;align-items:center;gap:8px;font-size:13px;text-transform:capitalize}
+ul.barres i{display:block;height:8px;border-radius:4px;background:var(--accent);opacity:.8}
 ul.disc li{padding:6px 0;border-bottom:1px dashed var(--line);min-width:0}
 ul.disc a{color:var(--fg);font-weight:600;text-decoration:none}
 ul.disc a:hover{color:var(--accent);text-decoration:underline}
@@ -161,6 +166,7 @@ fieldset.sups input{width:auto}
             <button class="btn ghost" type="button" data-run="tot">Completa la col·lecció (una tanda)</button>
             <button class="btn ghost" type="button" data-run="discogs">Sincronitza amb Discogs (CD i vinils)</button>
             <button class="btn ghost" type="button" data-run="nas">Busca discos nous al NAS</button>
+            <button class="btn ghost" type="button" data-run="perfil">Calcula la meva identitat musical</button>
             <button class="btn ghost local-only" type="button" id="mobilBtn">Obre-la al mòbil o la tauleta</button>
             <button class="btn ghost local-only" type="button" id="aturaBtn">Tanca la Discoteca</button>
             <button class="btn ghost" type="button" id="surtBtn">Surt del compte de Dropbox</button>
@@ -177,7 +183,7 @@ fieldset.sups input{width:auto}
         <button class="chip" type="button" data-sup="lp" aria-pressed="false">Vinil</button>
         <button class="chip" type="button" data-sup="fis" aria-pressed="false">Físics</button>
         <button class="chip" type="button" data-sup="pend" aria-pressed="false">Pendents</button>
-        <button class="chip recbtn" type="button" id="recsBtn">★ Recomanacions</button>
+        <button class="chip recbtn" type="button" id="recsBtn">★ Per a tu</button>
       </div>
       <select id="fEstil" aria-label="Estil"><option value="">Tots els estils</option></select>
       <select id="fNota" aria-label="Classificació mínima">
@@ -348,7 +354,7 @@ const api = async (path, opts) => {
     aplicaCanvis(cacheDades, cacheIgnorats, canvis);
     return cacheDades;
   }
-  if(p === '/api/oients') return llegeixJSON('/dades/oients.json', {});
+  if(p === '/api/lastfm') return llegeixJSON('/dades/lastfm.json', {});
   if(p === '/api/recs-tots'){
     if(!cacheRecs) cacheRecs = llegeixJSON('/dades/recs.json', {});
     return await cacheRecs;
@@ -616,45 +622,66 @@ async function loadDiscover(d){
 let igCache = null;
 const ignorats = () => igCache || (igCache = api('/api/ignorats').catch(()=>({artistes:[],discos:[]})));
 
-/* ---------- Recomanacions segons tota la biblioteca ---------- */
-let recsOpen = false, totsRecs = null;
+/* ---------- Identitat musical i recomanacions ---------- */
+let recsOpen = false, totsRecs = null, totsLF = null;
 const recsTots = () => totsRecs || (totsRecs = api('/api/recs-tots').catch(() => ({})));
-let totsOients = null;
-const oients = () => totsOients || (totsOients = api('/api/oients').catch(() => ({})));
-// molt coneguts (milions d'oients a Last.fm) baixen; els poc coneguts pugen una mica
-const factorFama = n => n == null ? 1 : n < 30000 ? 0.85 : n < 150000 ? 1.15 : 1 / (1 + 0.9*Math.log10(n/150000));
-function perfil(){
-  const perArt = new Map(), perEstil = new Map();
+const dadesLF = () => totsLF || (totsLF = api('/api/lastfm').catch(() => ({})));
+// etiquetes de Last.fm que no diuen res de l'estil
+const SOROLL = new Set(['seen live','favorites','favourites','favorite','favourite','my favorite','love','awesome','beautiful','amazing','cool','good','great','best','all','spotify','under 2000 listeners','albums i own','music','vinyl','male vocalists','female vocalists','male vocalist','female vocalist','singer','band','bands','usa','american','british','uk','english','canadian','australian','german','swedish','finnish','norwegian','spanish','french','italian','japanese','irish','scottish','polish','dutch','danish','brazilian']);
+const netTag = t => { t = String(t||'').toLowerCase().replace(/-/g,' ').replace(/\s+/g,' ').trim(); return SOROLL.has(t) || t.length < 2 ? null : t; };
+const vectorLF = x => { const v = new Map(); (x?.t||[]).forEach(([t,n]) => { t = netTag(t); if(t) v.set(t, (v.get(t)||0) + n/100); }); return v; };
+const cosinus = (a, b, nb) => { let s = 0, na = 0; a.forEach((x,k) => { na += x*x; const y = b.get(k); if(y) s += x*y; }); return na && nb ? s/Math.sqrt(na)/nb : 0; };
+const factorFama = n => n == null ? 1 : n < 30000 ? 0.9 : n < 150000 ? 1.1 : 1 / (1 + 0.9*Math.log10(n/150000));
+async function identitat(){
+  const LF = await dadesLF();
+  const perArt = new Map();
   for(const d of discs){
-    const n = num(d.classificacio) || 6;            // sense nota = neutre
-    const w = Math.max(0.1, (n - 4) / 6);           // un 10 pesa molt més que un 5
+    const n = num(d.classificacio) || 6;
     const a = String(d.artista);
     const A = perArt.get(a) || {s:0, n:0, estils:new Map()};
-    A.s += w; A.n++;
-    if(d.estil){ A.estils.set(d.estil, (A.estils.get(d.estil)||0) + 1); perEstil.set(d.estil, (perEstil.get(d.estil)||0) + w); }
+    A.s += Math.max(0.05, (n - 4) / 6); A.n++;
+    if(d.estil) A.estils.set(d.estil, (A.estils.get(d.estil)||0) + 1);
     perArt.set(a, A);
   }
-  return {perArt, perEstil, maxE: Math.max(1, ...perEstil.values())};
+  // el teu perfil: suma de les etiquetes de cada artista teu, pesat per quants discos en tens i quina nota els poses
+  const perfil = new Map(), estils = new Map(), decades = new Map();
+  let ambLF = 0;
+  perArt.forEach((A, aid) => {
+    A.pes = (A.s / A.n) * Math.sqrt(A.n);
+    A.vec = vectorLF(LF[tok2(artName(aid))]);
+    if(A.vec.size) ambLF++;
+    A.vec.forEach((x, t) => perfil.set(t, (perfil.get(t)||0) + x*A.pes));
+    A.estils.forEach((c, e) => estils.set(e, (estils.get(e)||0) + A.pes*c/A.n));
+  });
+  for(const d of discs){ const y = +d.any; if(y > 1900){ const dc = Math.floor(y/10)*10; decades.set(dc, (decades.get(dc)||0) + Math.max(0.05, ((num(d.classificacio)||6) - 4)/6)); } }
+  const np = Math.sqrt([...perfil.values()].reduce((s,x) => s+x*x, 0));
+  // referència: com encaixen amb el perfil els teus propis artistes preferits
+  const meus = [...perArt.entries()].filter(([,A]) => A.vec.size).map(([aid,A]) => ({aid, A, c:cosinus(A.vec, perfil, np)}));
+  const cs = meus.filter(x => x.A.s/x.A.n >= 0.5).map(x => x.c).sort((a,b) => a-b);
+  const ref = cs.length ? cs[Math.floor(cs.length*0.8)] : 0.5;
+  const encaix = v => Math.min(100, Math.round(100 * cosinus(v, perfil, np) / (ref || 1)));
+  const tot = [...perfil.values()].reduce((s,x) => s+x, 0) || 1;
+  const totD = [...decades.values()].reduce((s,x) => s+x, 0) || 1;
+  return {LF, perArt, perfil, np, encaix, ambLF, total: perArt.size,
+    tags: [...perfil.entries()].sort((a,b) => b[1]-a[1]).slice(0, 12).map(([t,x]) => [t, x/tot]),
+    decades: [...decades.entries()].sort((a,b) => b[1]-a[1]).slice(0, 4).map(([d,x]) => [d, x/totD]),
+    claus: meus.sort((a,b) => b.c*b.A.pes - a.c*a.A.pes).slice(0, 6).map(x => artName(x.aid))};
 }
 async function calculaRecs(){
-  const [R, ig, OI] = await Promise.all([recsTots(), ignorats(), oients()]);
-  const {perArt, perEstil, maxE} = perfil();
+  const [R, ig, I] = await Promise.all([recsTots(), ignorats(), identitat()]);
+  const {LF, perArt, encaix} = I;
   const tinc = new Set(Object.values({...artistes, ...newArtists}).map(tok2));
   const igA = new Set(ig.artistes), igD = new Set(ig.discos);
   const cand = new Map(), candD = new Map();
   let base = 0;
   for(const [aid, r] of Object.entries(R || {})){
     const A = perArt.get(String(aid)); if(!A || !r) continue; base++;
-    const estils = [...A.estils.entries()].sort((a,b) => b[1]-a[1]).slice(0, 2);
-    const afiEstil = estils.length ? (perEstil.get(estils[0][0])||0) / maxE : 0.3;
-    const pes = (A.s / A.n) * (0.4 + 0.6*Math.sqrt(afiEstil)) * (1 + Math.log(A.n)/4);
-    const nomA = artName(aid);
+    const nomA = artName(aid), pes = A.s / A.n;
     const suma = (M, k, x, i, extra) => {
-      const c = M.get(k) || {...extra, s:0, per:new Map(), fonts:new Set(), estils:new Map()};
-      c.s += pes * (x.score ?? (x.fonts?.length||1)) * Math.max(0.3, 1 - i/50);
+      const c = M.get(k) || {...extra, ev:0, per:new Map(), fonts:new Set()};
+      c.ev += pes * (x.score ?? (x.fonts?.length||1)) * Math.max(0.3, 1 - i/50);
       c.per.set(nomA, Math.max(c.per.get(nomA)||0, pes));
       (x.fonts||[]).forEach(f => c.fonts.add(f));
-      estils.forEach(([e]) => c.estils.set(e, (c.estils.get(e)||0) + pes));
       M.set(k, c);
     };
     (r.artistes||[]).forEach((x, i) => { const k = tok2(x.nom); if(k && !tinc.has(k) && !igA.has(k)) suma(cand, k, x, i, {nom:x.nom}); });
@@ -663,33 +690,50 @@ async function calculaRecs(){
       if(ka && !tinc.has(ka) && !igA.has(ka) && !igD.has(k)) suma(candD, k, x, i, {artista:x.artista, titol:x.titol, any:x.any});
     });
   }
-  const oi = nom => (OI[tok2(nom)] || [])[0];
-  const nota = c => c.s * (1 + 0.35*(c.per.size - 1)) * factorFama(oi(c.nom || c.artista));   // com més artistes teus hi coincideixen, millor
-  const ordena = M => [...M.entries()].map(([k,c]) => ({...c, k, punts:nota(c), oients:oi(c.nom || c.artista)})).sort((a,b) => b.punts - a.punts);
+  const dec = new Map(I.decades);
+  const puntua = c => {
+    const info = LF[tok2(c.nom || c.artista)];
+    const v = vectorLF(info);
+    c.oients = info?.o ?? null;
+    c.tags = [...v.entries()].sort((a,b) => b[1]-a[1]).slice(0, 3).map(x => x[0]);
+    c.encaix = v.size ? encaix(v) : null;
+    const fit = c.encaix == null ? 0.55 : c.encaix/100;                     // sense dades de Last.fm: prudència
+    const epoca = c.any ? 0.85 + 0.6*(dec.get(Math.floor(+c.any/10)*10) || 0) : 1;
+    c.punts = Math.pow(fit, 3) * (1 + Math.log(1 + c.ev)) * (1 + 0.25*(c.per.size - 1)) * factorFama(c.oients) * epoca;
+    return c;
+  };
+  const ordena = M => [...M.entries()].map(([k,c]) => puntua({...c, k})).filter(c => c.encaix == null || c.encaix >= 55).sort((a,b) => b.punts - a.punts);
   const A = ordena(cand).slice(0, 25);
   const perArtista = new Map();
   const D = ordena(candD).filter(x => { const n = perArtista.get(tok2(x.artista))||0; perArtista.set(tok2(x.artista), n+1); return n < 2; }).slice(0, 25);
-  return {A, D, base, total: perArt.size};
+  return {A, D, base, I};
 }
 async function obreRecs(){
   const sh = $('#sheet'); current = null; editing = false; recsOpen = true;
   sh.hidden = false; $('#scrim').hidden = false; document.body.style.overflow = 'hidden';
   if(!sh.querySelector('#recsBody')) sh.innerHTML = `<div class="bar"><button class="btn ghost" type="button" data-close>← Tanca</button></div>
-  <div class="body"><h2 id="sheetTitle" class="brand" style="margin-bottom:4px">Recomanacions per a tu</h2>
-  <p class="who2" style="margin:0 0 14px">Artistes i discos que no tens, triats segons els estils i les notes de tota la teva biblioteca. Els molt famosos baixen a la llista, perquè probablement ja els coneixes. El nom obre la biografia; ✕ el descarta per sempre.</p>
-  <div id="recsBody"><p class="who2">Calculant…</p></div></div>`;
-  const {A, D, base, total} = await calculaRecs();
+  <div class="body"><h2 id="sheetTitle" class="brand" style="margin-bottom:12px">La teva identitat musical</h2><div id="recsBody"><p class="who2">Calculant…</p></div></div>`;
+  const {A, D, base, I} = await calculaRecs();
   if(!recsOpen) return;
   const top = M => [...M.entries()].sort((a,b) => b[1]-a[1]).slice(0, 3).map(x => x[0]);
-  const perque = c => `<span class="who2 rq">Perquè t'agraden ${top(c.per).map(esc).join(', ')}${c.per.size > 3 ? ` i ${c.per.size-3} més` : ''}</span>`;
-  const etiq = c => top(c.estils).slice(0, 2).map(e => `<span class="tag">${esc(e)}</span>`).join('') + `<span class="tag" title="${esc([...c.fonts].join(', '))}">${c.fonts.size} ${c.fonts.size===1?'font':'fonts'}</span>`
+  const perque = c => `<span class="who2 rq">Hi coincideixen ${top(c.per).map(esc).join(', ')}${c.per.size > 3 ? ` i ${c.per.size-3} més` : ''}</span>`;
+  const etiq = c => (c.encaix != null ? `<span class="fit" title="Quant s'assembla al teu perfil musical">${c.encaix}%</span>` : '')
+    + c.tags.map(e => `<span class="tag">${esc(e)}</span>`).join('')
     + (c.oients != null && c.oients < 150000 ? '<span class="tag nou">Poc conegut</span>' : '');
   const am = q => 'https://www.allmusic.com/search/all/' + encodeURIComponent(q);
   const ign = (t, k) => `<button class="ign" type="button" data-ign="${t}" data-clau="${esc(k)}" title="Descarta: no me'l tornis a proposar">✕</button>`;
-  $('#recsBody').innerHTML = (!base ? '<p class="notice">Encara no hi ha recomanacions. Es van calculant a mesura que el PC completa els discos cada dia a les 14:30.</p>' : '')
-    + (A.length ? `<h3 class="sec">Artistes que et poden agradar · ${A.length}</h3><ul class="disc recs">${A.map(x => `<li><div><button class="link" type="button" data-info="${esc(x.nom)}">${esc(x.nom)}</button> ${etiq(x)}<br>${perque(x)}</div>${ign('artistes', x.k)}</li>`).join('')}</ul>` : '')
-    + (D.length ? `<h3 class="sec">Discos per descobrir · ${D.length}</h3><ul class="disc recs">${D.map(x => `<li><div><a href="${am(x.artista+' '+x.titol)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span> ${etiq(x)}<br>${perque(x)}</div>${ign('discos', x.k)}</li>`).join('')}</ul>` : '')
-    + (base && base < total ? `<p class="who2" style="margin-top:16px">Calculat amb ${base} dels teus ${total} artistes. Cada dia el PC n'afegeix més i les recomanacions milloren.</p>` : '');
+  const max = I.tags[0]?.[1] || 1;
+  const perfilHTML = I.tags.length ? `<div class="ident">
+      <ul class="barres">${I.tags.map(([t,x]) => `<li><span>${esc(t)}</span><i style="width:${Math.round(100*x/max)}%"></i></li>`).join('')}</ul>
+      <p class="who2">Èpoques: ${I.decades.map(([d,x]) => `<b>${String(d).slice(2)}s</b> ${Math.round(100*x)}%`).join(' · ')}<br>
+      Artistes que et defineixen: ${I.claus.map(esc).join(', ')}</p></div>`
+    : `<p class="notice">Encara no tinc el teu perfil d'estils. Ves a <b>Eines → Calcula la meva identitat musical</b> al PC (tarda uns 40 minuts la primera vegada); si no, es farà a poc a poc cada dia a les 14:30.</p>`;
+  $('#recsBody').innerHTML = perfilHTML
+    + `<p class="who2" style="margin:14px 0 0">Propostes que no tens, ordenades pel % d'encaix amb aquest perfil. Els molt famosos baixen, perquè segurament ja els coneixes. El nom obre la biografia; ✕ el descarta per sempre.</p>`
+    + (!base ? '<p class="notice">Encara no hi ha propostes: es van recollint a mesura que el PC completa els discos.</p>' : '')
+    + (A.length ? `<h3 class="sec">Artistes per a tu · ${A.length}</h3><ul class="disc recs">${A.map(x => `<li><div><button class="link" type="button" data-info="${esc(x.nom)}">${esc(x.nom)}</button> ${etiq(x)}<br>${perque(x)}</div>${ign('artistes', x.k)}</li>`).join('')}</ul>` : '')
+    + (D.length ? `<h3 class="sec">Discos per a tu · ${D.length}</h3><ul class="disc recs">${D.map(x => `<li><div><a href="${am(x.artista+' '+x.titol)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span> ${etiq(x)}<br>${perque(x)}</div>${ign('discos', x.k)}</li>`).join('')}</ul>` : '')
+    + `<p class="who2" style="margin-top:16px">Perfil fet amb ${I.ambLF} dels teus ${I.total} artistes · propostes recollides de ${base}. Cada dia el PC n'hi afegeix més.</p>`;
 }
 async function ignora(tipus, clau){
   try{ await postJSON('/api/ignora', {tipus, clau}); }catch{ toast('No s\'ha pogut desar.'); return; }
