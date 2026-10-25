@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ca"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="ca"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src https://api.dropboxapi.com https://content.dropboxapi.com https://musicbrainz.org https://www.wikidata.org https://ca.wikipedia.org https://es.wikipedia.org https://en.wikipedia.org; object-src 'none'; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Discoteca de l'Ignasi</title>
 <link rel="icon" href="favicon.png"><link rel="apple-touch-icon" href="icona-180.png"><link rel="manifest" href="manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Discoteca"><meta name="theme-color" content="#8a1c1c">
@@ -225,6 +225,7 @@ fieldset.sups input{width:auto}
 <script>
 (() => {
 const $ = s => document.querySelector(s);
+const urlSegur = u => /^https?:\/\//i.test(String(u||'')) ? esc(u) : '#';   // mai «javascript:»
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const PAGE = 120;
@@ -592,7 +593,7 @@ function renderSheet(){
       return (sa.length?`<h3 class="sec">Artistes similars a la teva col·lecció</h3><div class="others">${sa.map(([a,,best])=>`<button class="card" type="button" data-artist="${esc(a)}">${sleeveHTML(best,false)}<span class="t">${esc(artName(a))}</span><span class="a">${esc(best.estil||best.genere||'')}</span></button>`).join('')}</div>`:'')
         + (sd.length?`<h3 class="sec">Discos similars a la teva col·lecció</h3><div class="others">${sd.map(cardHTML).join('')}</div>`:''); })()}
     <div id="discover"></div>
-    ${d.fonts?`<p class="srcs">Fonts: ${Object.entries(d.fonts).map(([k,u])=>`<a href="${esc(u)}" target="_blank" rel="noopener">${esc(k==='allmusic'?'AllMusic':k)}</a>`).join(' · ')}</p>`:''}
+    ${d.fonts?`<p class="srcs">Fonts: ${Object.entries(d.fonts).map(([k,u])=>`<a href="${urlSegur(u)}" target="_blank" rel="noopener">${esc(k==='allmusic'?'AllMusic':k)}</a>`).join(' · ')}</p>`:''}
     ${others.length?`<h3 class="sec">Altres gravacions de ${esc(artName(d.artista))} · ${others.length}</h3><div class="others">${others.map(cardHTML).join('')}</div>`:''}
   </div>`;
   sh.querySelectorAll('.sleeve').forEach(el => io.observe(el));
@@ -998,7 +999,7 @@ async function obreInfo(nom, banda){
     cos().innerHTML = `
       <div class="ihero">${wiki?.foto ? `<img src="${esc(wiki.foto)}" alt="" referrerpolicy="no-referrer">` : ''}
         <div>${tipus || anys || det.country ? `<p class="who2">${[tipus, anys, det.country].filter(Boolean).map(esc).join(' · ')}</p>` : ''}
-        ${wiki ? `<p>${esc(wiki.text)}</p><p class="srcs"><a href="${esc(wiki.url)}" target="_blank" rel="noopener">Wikipedia (${wiki.llengua})</a> · <a href="https://musicbrainz.org/artist/${a.id}" target="_blank" rel="noopener">MusicBrainz</a></p>`
+        ${wiki ? `<p>${esc(wiki.text)}</p><p class="srcs"><a href="${urlSegur(wiki.url)}" target="_blank" rel="noopener">Wikipedia (${wiki.llengua})</a> · <a href="https://musicbrainz.org/artist/${a.id}" target="_blank" rel="noopener">MusicBrainz</a></p>`
                : `<p class="who2">No hi ha article a la Wikipedia.</p><p class="srcs"><a href="https://musicbrainz.org/artist/${a.id}" target="_blank" rel="noopener">MusicBrainz</a></p>`}</div></div>
       ${membresDe.length ? `<h3 class="sec">Grups i projectes · ${membresDe.length}</h3><ul class="disc">${membresDe.map(fila).join('')}</ul>` : ''}
       ${membres.length ? `<h3 class="sec">Membres · ${membres.length}</h3><ul class="disc">${membres.map(fila).join('')}</ul>` : ''}
