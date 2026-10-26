@@ -166,6 +166,7 @@ fieldset.sups input{width:auto}
             <button class="btn ghost" type="button" data-run="tot">Completa la col·lecció (una tanda)</button>
             <button class="btn ghost" type="button" data-run="discogs">Sincronitza amb Discogs (CD i vinils)</button>
             <button class="btn ghost" type="button" data-run="nas">Busca discos nous al NAS</button>
+            <button class="btn ghost" type="button" data-run="duplicats">Busca i ajunta discos duplicats</button>
             <button class="btn ghost" type="button" data-run="perfil">Calcula la meva identitat musical</button>
             <button class="btn ghost local-only" type="button" id="mobilBtn">Obre-la al mòbil o la tauleta</button>
             <button class="btn ghost local-only" type="button" id="aturaBtn">Tanca la Discoteca</button>
@@ -380,11 +381,13 @@ const postJSON = async (path, obj) => {
     const patch = {};
     for(const [k, v] of Object.entries(obj)) if(!orig || JSON.stringify(orig[k]) !== JSON.stringify(v)) patch[k] = v;
     if(orig) for(const k of Object.keys(orig)) if(!(k in obj) && !k.startsWith('_') && !['proc','no_trobat','carpeta','fonts','discogs_release'].includes(k)) patch[k] = null;
+    if(obj.reintenta){ patch.proc = null; patch.no_trobat = null; }
     await desaCanvi({tipus: 'disc', id: obj.id, patch, nou: !orig});
     return {ok: true, id: obj.id};
   }
   if(path === '/api/esborra'){ await desaCanvi({tipus: 'esborra', id: obj.id}); return {ok: true}; }
   if(path === '/api/artista'){
+    if(obj.id){ await desaCanvi({tipus: 'artista', id: obj.id, nom: obj.nom}); artistes[obj.id] = obj.nom; return {ok: true, id: obj.id}; }
     for(const [k, v] of Object.entries(artistes)) if(norm(v) === norm(obj.nom)) return {ok: true, id: k};
     const id = 'a' + Date.now();
     await desaCanvi({tipus: 'artista', id, nom: obj.nom});
@@ -776,6 +779,7 @@ function renderForm(){
       <label class="wide">Artista
         <select id="e_artista">${arts.map(([id,n])=>`<option value="${esc(id)}" ${String(d.artista)===String(id)?'selected':''}>${esc(n)}</option>`).join('')}<option value="__new">+ Artista nou…</option></select>
       </label>
+      <label class="wide" id="nomArtWrap" ${current?'':'hidden'}>Nom de l'artista (corregeix-lo si està mal escrit: es canvia a tots els seus discos)<input id="e_nomart" autocomplete="off" value="${esc(artName(d.artista))}"></label>
       <label class="wide" id="newArtWrap" hidden>Nom de l'artista nou<input id="e_newart" autocomplete="off"></label>
       <div class="wide notice">Per a un CD o vinil, n'hi ha prou amb el <b>codi de barres</b> o el <b>número de catàleg</b>. El disc queda «pendent de completar» i s'omple sol amb les dades de Discogs i AllMusic.
         <div class="scan"><label class="btn" for="e_scan">Llegeix el codi d'una foto</label><input id="e_scan" type="file" accept="image/*" capture="environment" hidden><span id="scanMsg"></span></div></div>
@@ -794,7 +798,7 @@ function renderForm(){
   </div>`;
   sh.querySelectorAll('.sleeve').forEach(el => io.observe(el));
   if(!arts.length || current == null) {}
-  $('#e_artista').addEventListener('change', e => { $('#newArtWrap').hidden = e.target.value !== '__new'; });
+  $('#e_artista').addEventListener('change', e => { const nou = e.target.value === '__new'; $('#newArtWrap').hidden = !nou; $('#nomArtWrap').hidden = nou || !current; if(!nou) $('#e_nomart').value = artName(e.target.value); });
   $('#e_cover').addEventListener('change', onCover);
   $('#e_scan').addEventListener('change', onScan);
   sh.addEventListener('paste', onPasteCover);
@@ -851,6 +855,12 @@ async function onSave(e){
       const nom = $('#e_newart').value.trim(); if(!nom){ toast('Escriu el nom de l\'artista nou.'); btn.disabled=false; return; }
       artista = (await postJSON('/api/artista', {nom})).id;
       artistes[artista] = nom;
+    } else if(current && $('#e_nomart').value.trim() && $('#e_nomart').value.trim() !== artName(artista)){
+      const nom = $('#e_nomart').value.trim();
+      const ja = Object.entries({...artistes, ...newArtists}).find(([k, v]) => k !== String(artista) && norm(v) === norm(nom));
+      if(ja) artista = ja[0];                       // ja existeix amb el nom bo: el disc hi passa
+      else { await postJSON('/api/artista', {id: String(artista), nom}); artistes[artista] = nom; }
+      var reanomenat = true;
     }
     const rec = {artista: String(artista)};
     for(const [k] of FIELDS){ const v = $('#e_'+k).value.trim(); rec[k] = v || null; }
@@ -863,7 +873,9 @@ async function onSave(e){
     rec.id = id;
     if(pendingCover){ await api('/api/caratula?id=' + encodeURIComponent(id), {method:'POST', body: pendingCover}); rec.caratula = true; rec.cv = Date.now(); }
     else if(current?.caratula){ rec.caratula = true; if(current.cv) rec.cv = current.cv; }
-    for(const k of ['carpeta','discogs_release','discogs_master','completat','caratules','megasearch','proc','no_trobat']) if(current?.[k]) rec[k] = current[k];
+    const corregit = current && (reanomenat || String(current.artista) !== rec.artista || (current.titol||'') !== (rec.titol||''));
+    for(const k of ['carpeta','discogs_release','discogs_master','completat','caratules','megasearch', ...(corregit ? [] : ['proc','no_trobat'])]) if(current?.[k]) rec[k] = current[k];
+    if(corregit) rec.reintenta = true;               // el PC el tornarà a buscar a internet amb el nom corregit
     for(const k in rec) if(rec[k] === null) delete rec[k];
     rec.updatedAt = new Date().toISOString();
     if($('#e_pend').checked) rec.estat = 'pendent';
