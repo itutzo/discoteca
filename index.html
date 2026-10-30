@@ -617,7 +617,7 @@ async function loadDiscover(d){
   const rank = L => [...L].map((x,i)=>[x,i]).sort((a,b)=>sc(b[0])-sc(a[0]) || a[1]-b[1]).map(x=>x[0]);
   const A = rank(r.artistes||[]).filter(x=>!have.has(tok2(x.nom))).slice(0,5);
   const seen = new Set();
-  const D = rank(r.discos||[]).filter(x=>!have.has(tok2(x.artista)) && !haveD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !igD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !seen.has(tok2(x.artista)) && seen.add(tok2(x.artista))).slice(0,5);
+  const D = rank(r.discos||[]).filter(x=>tok2(x.artista) && !have.has(tok2(x.artista)) && !haveD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !igD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !seen.has(tok2(x.artista)) && seen.add(tok2(x.artista))).slice(0,5);
   const chips = f => (f||[]).map(x=>`<span class="tag">${esc(x)}</span>`).join('');
   const am = q => 'https://www.allmusic.com/search/all/' + encodeURIComponent(q);
   box.innerHTML = (A.length?`<h3 class="sec">Per descobrir · artistes</h3><ul class="disc">${A.map(x=>`<li><a href="${am(x.nom)}" target="_blank" rel="noopener">${esc(x.nom)}</a>${chips(x.fonts)}<button class="ign" type="button" data-ign="artistes" data-clau="${esc(tok2(x.nom))}" title="No m'interessa: no me'l tornis a proposar">✕</button></li>`).join('')}</ul>`:'')
